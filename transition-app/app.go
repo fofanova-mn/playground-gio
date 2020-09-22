@@ -65,6 +65,26 @@ func (state avState) icon() *widget.Icon {
 
 func (state avState) change() avState { return 1 - state }
 
+type navState int
+
+const (
+	navStateForward navState = iota
+	navStateBack
+)
+
+var navIcons = [2]*widget.Icon{
+	mustNewIcon((icons.NavigationArrowForward)),
+	mustNewIcon(icons.NavigationArrowBack),
+}
+
+var saveIcon = mustNewIcon(icons.ContentSave)
+
+func (state navState) icon() *widget.Icon {
+	return navIcons[state]
+}
+
+func (state navState) change() navState { return 1 - state }
+
 func (app *transitionApp) mainloop() error {
 	ops := &op.Ops{}
 
@@ -79,6 +99,13 @@ func (app *transitionApp) mainloop() error {
 		avCtrl  widget.Clickable
 		avState avState
 	)
+
+	var (
+		navCtrl  widget.Clickable
+		navState navState
+	)
+
+	var saveCtrl widget.Clickable
 
 	for e := range app.win.Events() {
 		switch e := e.(type) {
@@ -95,39 +122,21 @@ func (app *transitionApp) mainloop() error {
 				avState = avState.change()
 			}
 
+			if navCtrl.Clicked() {
+				navState = navState.change()
+				if navState == navStateBack {
+					avState = avStatePlaying
+				}
+			}
+
+			axis := layout.Horizontal
+			if gtx.Constraints.Max.X < gtx.Constraints.Max.Y {
+				axis = layout.Vertical
+			}
 			layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					axis := layout.Horizontal
-					if gtx.Constraints.Max.X < gtx.Constraints.Max.Y {
-						axis = layout.Vertical
-					}
-					return layout.Flex{Axis: axis}.Layout(gtx,
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return layout.Center.Layout(gtx, app.thumbnailImgs[selected].Layout)
-						}),
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return layout.Stack{Alignment: layout.Center}.Layout(gtx,
-								layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-									defer op.Record(gtx.Ops).Stop()
-									return layout.Center.Layout(gtx, app.thumbnailImgs[selected].Layout)
-								}),
-								layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-									if avState == avStatePaused {
-										l := material.H5(app.theme, "PREVIEW\nPLACEHOLDER")
-										return layout.Center.Layout(gtx, l.Layout)
-									}
-									var d layout.Dimensions
-									for _, anim := range app.animations {
-										d = anim.Layout(gtx)
-									}
-									return d
-								}),
-								layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-									return layout.S.Layout(gtx, material.IconButton(app.theme, &avCtrl, avState.icon()).Layout)
-								}),
-							)
-						}),
-					)
+				layoutTab(gtx, app.theme, avState, &avCtrl, navState, &navCtrl, app.thumbnailImgs[selected], app.animations, axis),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: axis}.Layout(gtx, layoutButtons(gtx, app.theme, avState, &avCtrl, navState, &navCtrl, &saveCtrl)...)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.S.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -142,6 +151,68 @@ func (app *transitionApp) mainloop() error {
 		}
 	}
 	return nil
+}
+
+func layoutButtons(
+	gtx layout.Context,
+	theme *material.Theme,
+	avState avState,
+	avCtrl *widget.Clickable,
+	navState navState,
+	navCtrl *widget.Clickable,
+	saveCtrl *widget.Clickable) []layout.FlexChild {
+	var children []layout.FlexChild
+
+	children = append(children, layout.Flexed(1, material.IconButton(theme, navCtrl, navState.icon()).Layout))
+	if navState == navStateBack {
+		children = append(children, layout.Flexed(1, material.IconButton(theme, avCtrl, avState.icon()).Layout))
+		children = append(children, layout.Flexed(1, material.IconButton(theme, saveCtrl, saveIcon).Layout))
+	}
+	return children
+}
+
+func layoutTab(
+	gtx layout.Context,
+	theme *material.Theme,
+	avState avState,
+	avCtrl *widget.Clickable,
+	navState navState,
+	navCtrl *widget.Clickable,
+	selectedImage *ycwidget.Image,
+	animations []*FrameSet,
+	axis layout.Axis) layout.FlexChild {
+	if navState == navStateForward {
+		return layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return layout.Center.Layout(gtx, selectedImage.Layout)
+		})
+	}
+	return layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+		return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+			layoutTransformation(gtx, theme, avState, navState, selectedImage, animations),
+		)
+	})
+}
+
+func layoutTransformation(
+	gtx layout.Context,
+	theme *material.Theme,
+	avState avState,
+	navState navState,
+	selectedImage *ycwidget.Image,
+	animations []*FrameSet) layout.StackChild {
+	if avState == avStatePaused {
+		return layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			defer op.Record(gtx.Ops).Stop()
+			return layout.Center.Layout(gtx, selectedImage.Layout)
+		})
+	}
+	return layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+		var d layout.Dimensions
+		for _, anim := range animations {
+			d = anim.Layout(gtx)
+		}
+		return d
+	})
 }
 
 const (
